@@ -210,10 +210,12 @@ write_profile() {
 write_export() {
   info "Exporting binary paths"
   info "I am:"
-  echo whoami
-  ls -la $bp_dir/export
-  sudo echo "export PATH=\"$build_dir/.heroku/node/bin:$build_dir/node_modules/.bin:\$PATH\"" > $bp_dir/export
-  sudo echo "export NODE_HOME=\"$build_dir/.heroku/node\"" >> $bp_dir/export
+  whoami
+  ls -la $bp_dir
+  info "Creating export file with: export PATH=\"$build_dir/.heroku/node/bin:$build_dir/node_modules/.bin:\$PATH\""
+  echo "export PATH=\"$build_dir/.heroku/node/bin:$build_dir/node_modules/.bin:\$PATH\"" > $bp_dir/export
+  info "Append export file: export NODE_HOME=\"$build_dir/.heroku/node\""
+  echo "export NODE_HOME=\"$build_dir/.heroku/node\"" >> $bp_dir/export
 }
 
 clean_npm() {
