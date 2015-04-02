@@ -209,9 +209,7 @@ write_profile() {
 
 write_export() {
   info "Exporting binary paths"
-  info "Which sudo?"
-  which sudo
-  info "is it there?"
+  # which sudo
   local _path="export PATH=\"$build_dir/.heroku/node/bin:$build_dir/node_modules/.bin:\$PATH\""
   local _node_home="export NODE_HOME=\"$build_dir/.heroku/node\""
   # echo $_path > $bp_dir/export
