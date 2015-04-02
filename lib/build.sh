@@ -209,8 +209,13 @@ write_profile() {
 
 write_export() {
   info "Exporting binary paths"
-  sudo bash -c "echo \"export PATH=\"$build_dir/.heroku/node/bin:$build_dir/node_modules/.bin:\$PATH\"\" > $bp_dir/export"
-  sudo bash -c "echo \"export NODE_HOME=\"$build_dir/.heroku/node\"\" >> $bp_dir/export"
+  info "Which sudo?"
+  which sudo
+  info "is it there?"
+  local _path="export PATH=\"$build_dir/.heroku/node/bin:$build_dir/node_modules/.bin:\$PATH\""
+  local _node_home="export NODE_HOME=\"$build_dir/.heroku/node\""
+  # echo $_path > $bp_dir/export
+  # echo $_node_home >> $bp_dir/export
 }
 
 clean_npm() {
