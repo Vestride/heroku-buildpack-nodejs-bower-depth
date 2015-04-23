@@ -79,6 +79,17 @@ build_dependencies
         (cd `dirname $file` && $bower_dir/bower install | indent)
       done
     fi
+
+    # Custom bower folder for extra installs.
+    if [ "$CUSTOM_BOWER_DIR" != "" ]; then
+      if [ -d $build_dir/$CUSTOM_BOWER_DIR ]; then
+        head "Custom bower directory set, running bower install within '$CUSTOM_BOWER_DIR'"
+        (cd "$CUSTOM_BOWER_DIR" && $bower_dir/bower install | indent)
+      else
+        head "'$build_dir/$CUSTOM_BOWER_DIR' directory does not exist"
+      fi
+    fi
+
   else
     head "No bower.json found"
   fi
