@@ -45,6 +45,8 @@ rebuild_node_modules() {
 }
 
 install_bower_components() {
+  local build_dir=${1:-}
+
   # Check and run bower
   if [ -f $build_dir/bower.json ]; then
     # Install bower locally
