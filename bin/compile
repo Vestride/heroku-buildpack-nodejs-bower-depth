@@ -136,7 +136,7 @@ header "Building dependencies"
 build_dependencies | output "$LOG_FILE"
 
 header "Looking for bower.json"
-install_bower_components | output "$LOG_FILE"
+install_bower_components "$BUILD_DIR" | output "$LOG_FILE"
 
 cache_build() {
   local cache_directories=$(get_cache_directories)
