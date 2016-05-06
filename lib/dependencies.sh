@@ -48,9 +48,9 @@ install_bower_components() {
   local build_dir=${1:-}
 
   # Check and run bower
-  if [ -f $build_dir/bower.json ]; then
+  if [ -e $build_dir/bower.json ]; then
     # Install bower locally
-    header "Found bower.json, installing bower."
+    info "Found bower.json, installing bower."
     npm install bower 2>&1
     bower_dir=$build_dir/node_modules/.bin
     info "Bower installed. Running bower install."
@@ -76,6 +76,6 @@ install_bower_components() {
     fi
 
   else
-    header "No bower.json found"
+    info "No bower.json found"
   fi
 }
