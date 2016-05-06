@@ -59,7 +59,7 @@ install_bower_components() {
     $bower_dir/bower install --force-latest && $bower_dir/bower update --force-latest 2>&1
 
     # Deep Bower install.
-    if [ $bower_glob != "" ]; then
+    if [ "$bower_glob" != "" ]; then
       header "Installing bower components for bower components which match '$bower_glob'"
 
       for file in $( ls bower_components/$bower_glob/bower.json ); do
@@ -68,7 +68,7 @@ install_bower_components() {
     fi
 
     # Custom bower folder for extra installs.
-    if [ $custom_bower_dir != "" ]; then
+    if [ "$custom_bower_dir" != "" ]; then
       if [ -d $build_dir/$custom_bower_dir ]; then
         header "Custom bower directory set, running bower install within '$custom_bower_dir'"
         (cd "$custom_bower_dir" && $bower_dir/bower install 2>&1)
