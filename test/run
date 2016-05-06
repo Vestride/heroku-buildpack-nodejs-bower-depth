@@ -1,14 +1,225 @@
 #!/usr/bin/env bash
 # See README.md for info on running these tests.
 
-testDetectWithPackageJson() {
-  detect "stable-node"
-  assertCaptured "Node.js"
+testEnvBlacklist() {
+  local cache=$(mktmpdir)
+  local env_dir=$(mktmpdir)
+  echo 'tr_TR.UTF-8' > "$env_dir"/LANG
+  echo 'safeVar' > "$env_dir"/SAFE
+  compile "echo-lang" $cache $env_dir
+  assertCaptured "safeVar"
+  assertNotCaptured "tr_TR.UTF-8"
   assertCapturedSuccess
 }
 
-testDetectWithServer() {
-  detect "server-present-only"
+testPrePostBuildScripts() {
+  compile "pre-post-build-scripts"
+  assertCaptured "Running heroku-prebuild"
+  assertCaptured "echo heroku-prebuild hook message"
+  assertCaptured "Running heroku-postbuild"
+  assertCaptured "echo heroku-postbuild hook message"
+  assertCapturedSuccess
+
+  compile "stable-node"
+  assertNotCaptured "Running heroku-prebuild"
+  assertNotCaptured "Running heroku-postbuild"
+  assertCapturedSuccess
+}
+
+testWarningsOnFailure() {
+  compile "many-warnings"
+  assertCaptured "troubleshooting-node-deploys"
+  assertCaptured "node_modules checked into source"
+  assertCaptured "has several known issues"
+  assertNotCaptured "please submit a ticket"
+  assertCapturedError
+}
+
+testMultipleRuns() {
+  local compileDir=$(mktmpdir)
+  local cacheDir=$(mktmpdir)
+
+  cp -a test/fixtures/stable-node/. ${compileDir}
+  compileDir "$compileDir" "$cacheDir"
+  assertCapturedSuccess
+  compileDir "$compileDir" "$cacheDir"
+  assertCapturedSuccess
+}
+
+testDisableCache() {
+  cache=$(mktmpdir)
+  env_dir=$(mktmpdir)
+
+  compile "node-modules-cache-1" $cache
+  assertCaptured "lodash@1.0.0"
+  assertEquals "1" "$(ls -1 $cache/node/node_modules | grep lodash | wc -l | tr -d ' ')"
+  assertCapturedSuccess
+
+  compile "node-modules-cache-2" $cache
+  assertCaptured "lodash@1.0.0"
+  assertCaptured "Saving 2 cacheDirectories"
+  assertCapturedSuccess
+
+  echo "false" > $env_dir/NODE_MODULES_CACHE
+  compile "node-modules-cache-2" $cache $env_dir
+  assertCaptured "lodash@1.3.1"
+  assertNotCaptured "Saving 2 cacheDirectories"
+  assertCapturedSuccess
+}
+
+testBowerAngularResolution() {
+  compile "bower-angular-resolution"
+  assertCaptured "Bower may need a resolution hint for angular"
+  assertCapturedError
+}
+
+testUntrackedDependencies() {
+  compile "missing-grunt"
+  assertCaptured "Grunt may not be tracked in package.json"
+  assertCapturedError
+}
+
+testBadJson() {
+  compile "bad-json"
+  assertCaptured "Build failed"
+  assertCaptured "We're sorry this build is failing"
+  assertNotCaptured "Installing binaries"
+  assertCapturedError 1 "Unable to parse"
+}
+
+testNodeModulesCached() {
+  cache=$(mktmpdir)
+
+  compile "caching" $cache
+  assertCaptured "Saving 2 cacheDirectories (default)"
+  assertCaptured "- node_modules"
+  assertCaptured "- bower_components (nothing to cache)"
+  assertEquals "1" "$(ls -1 $cache/node | grep node_modules | wc -l | tr -d ' ')"
+  assertCapturedSuccess
+}
+
+testBuildWithUserCacheDirectoriesCamel() {
+  cache=$(mktmpdir)
+
+  compile "cache-directories-camel" $cache
+  assertCaptured "- non/existent (nothing to cache)"
+  assertEquals "1" "$(ls -1 $cache/node/server | grep node_modules | wc -l | tr -d ' ')"
+  assertEquals "1" "$(ls -1 $cache/node/client | grep node_modules | wc -l | tr -d ' ')"
+  assertCapturedSuccess
+
+  compile "cache-directories-camel" $cache
+  assertCaptured "Loading 3 from cacheDirectories"
+  assertCaptured "- server/node_modules"
+  assertCaptured "- client/node_modules"
+  assertCaptured "- non/existent (not cached - skipping)"
+  assertCapturedSuccess
+}
+
+testConcurrency1X() {
+  LOG_CONCURRENCY=true MEMORY_AVAILABLE=512 capture $(pwd)/profile/nodejs.sh
+  assertCaptured "Detected 512 MB available memory, 512 MB limit per process (WEB_MEMORY)"
+  assertCaptured "Recommending WEB_CONCURRENCY=1"
+  assertCapturedSuccess
+}
+
+testConcurrency2X() {
+  LOG_CONCURRENCY=true MEMORY_AVAILABLE=1024 capture $(pwd)/profile/nodejs.sh
+  assertCaptured "Detected 1024 MB available memory, 512 MB limit per process (WEB_MEMORY)"
+  assertCaptured "Recommending WEB_CONCURRENCY=2"
+  assertCapturedSuccess
+}
+
+testConcurrencyPerformanceM() {
+  LOG_CONCURRENCY=true MEMORY_AVAILABLE=2560 capture $(pwd)/profile/nodejs.sh
+  assertCaptured "Detected 2560 MB available memory, 512 MB limit per process (WEB_MEMORY)"
+  assertCaptured "Recommending WEB_CONCURRENCY=5"
+  assertCapturedSuccess
+}
+
+testConcurrencyPerformanceL() {
+   LOG_CONCURRENCY=true MEMORY_AVAILABLE=14336 capture $(pwd)/profile/nodejs.sh
+   assertCaptured "Detected 14336 MB available memory, 512 MB limit per process (WEB_MEMORY)"
+   assertCaptured "Recommending WEB_CONCURRENCY=28"
+   assertCapturedSuccess
+}
+
+testConcurrencyCustomLimit() {
+  LOG_CONCURRENCY=true MEMORY_AVAILABLE=1024 WEB_MEMORY=256 capture $(pwd)/profile/nodejs.sh
+  assertCaptured "Detected 1024 MB available memory, 256 MB limit per process (WEB_MEMORY)"
+  assertCaptured "Recommending WEB_CONCURRENCY=4"
+  assertCapturedSuccess
+}
+
+testConcurrencySaneMaximum() {
+  LOG_CONCURRENCY=true MEMORY_AVAILABLE=6144 WEB_MEMORY=32 capture $(pwd)/profile/nodejs.sh
+  assertCaptured "Detected 6144 MB available memory, 32 MB limit per process (WEB_MEMORY)"
+  assertCaptured "Recommending WEB_CONCURRENCY=32"
+  assertCapturedSuccess
+}
+
+testInvalidNode() {
+  compile "invalid-node"
+  assertCaptured "Downloading and installing node 0.11.33"
+  assertCaptured "Unable to download node 0.11.33"
+  assertCapturedError
+}
+
+testInvalidIo() {
+  compile "invalid-io"
+  assertCaptured "Downloading and installing iojs 2.0.99"
+  assertCaptured "Unable to download iojs 2.0.99"
+  assertCapturedError
+}
+
+testBuildWithCache() {
+  cache=$(mktmpdir)
+
+  compile "stable-node" $cache
+  assertCaptured "Skipping cache restore (new runtime"
+  assertEquals "1" "$(ls -1 $cache/node | grep node_modules | wc -l | tr -d ' ')"
+  assertCapturedSuccess
+
+  compile "stable-node" $cache
+  assertNotCaptured "- node_modules (not cached - skipping)"
+  assertCapturedSuccess
+
+  rm -rf "$cache/node/node_modules"
+  compile "stable-node" $cache
+  assertCaptured "- node_modules (not cached - skipping)"
+  assertCapturedSuccess
+}
+
+testSignatureInvalidation() {
+  cache=$(mktmpdir)
+  env_dir=$(mktmpdir)
+
+  compile "node-0.12.6" $cache
+  assertCaptured "Downloading and installing node 0.12.6"
+  assertCapturedSuccess
+
+  compile "node-0.12.7" $cache
+  assertCaptured "Downloading and installing node 0.12.7"
+  assertCaptured "Skipping cache restore (new runtime"
+  assertCapturedSuccess
+}
+
+testModulesCheckedIn() {
+  cache=$(mktmpdir)
+  compile "modules-checked-in" $cache
+  assertCapturedSuccess
+
+  compile "modules-checked-in" $cache
+  assertCaptured "Prebuild detected"
+  assertCaptured "Rebuilding any native modules"
+  assertCaptured "(preinstall script)"
+  assertCaptured "Installing any new modules"
+  assertCaptured "(postinstall script)"
+  assertNotCaptured "Pruning any extraneous modules"
+  assertCapturedSuccess
+}
+
+testDetectWithPackageJson() {
+  detect "stable-node"
   assertCaptured "Node.js"
   assertCapturedSuccess
 }
@@ -18,30 +229,19 @@ testDetectWithoutPackageJson() {
   assertCapturedError 1 ""
 }
 
-testBadJson() {
-  compile "bad-json"
-  assertCaptured "Build failed"
-  assertCaptured "We're sorry this build is failing"
-  assertNotCaptured "build directory..."
-  assertNotCaptured "Installing binaries"
-  assertCapturedError 1 "Unable to parse"
-}
-
 testIoJs() {
   compile "iojs"
-  assertCaptured "Node engine:         1.0."
-  assertCaptured "(iojs)"
-  assertCaptured "detected node version: v1.0."
+  assertCaptured "engines.iojs (package.json):  1.0."
+  assertCaptured "Downloading and installing iojs 1.0."
+  assertNotCaptured "Downloading and installing npm"
   assertCapturedSuccess
 }
 
 testNoVersion() {
   compile "no-version"
-  assertCaptured "Node engine:         unspecified"
-  assertCaptured "WARNING: Node version not specified in package.json"
+  assertCaptured "engines.node (package.json):  unspecified"
   assertCaptured "Resolving node version (latest stable) via semver.io"
-  assertCaptured "Downloading and installing node 0.12"
-  assertNotCaptured "We're sorry this build is failing"
+  assertCaptured "Downloading and installing node 5."
   assertCapturedSuccess
 }
 
@@ -50,13 +250,12 @@ testSpecificVersion() {
   assertNotCaptured "Resolving node version"
   assertCaptured "Downloading and installing node 0.10.29"
   assertCaptured "Using default npm version: 1.4.14"
-  assertNotCaptured "We're sorry this build is failing"
   assertCapturedSuccess
 }
 
 testStableVersion() {
   compile "stable-node"
-  assertCaptured "Downloading and installing node 0.10"
+  assertCaptured "Downloading and installing node 0.10."
   assertNotCaptured "We're sorry this build is failing"
   assertCapturedSuccess
 }
@@ -64,15 +263,20 @@ testStableVersion() {
 testUnstableVersion() {
   compile "unstable-version"
   assertCaptured "Resolving node version 0.11.x via semver.io"
-  assertCaptured "Downloading and installing node 0.11"
+  assertCaptured "Downloading and installing node 0.11."
   assertCapturedSuccess
 }
 
 testOldNpm() {
   compile "old-npm"
-  assertCaptured "WARNING: This version of npm (1.2.8000) has several known issues - consider upgrading to the latest release (2."
+  assertCaptured "This version of npm (1.2.8000) has several known issues - consider upgrading to the latest release (3."
   assertNotCaptured "integer expression expected"
-  assertCapturedSuccess
+  assertCapturedError
+}
+
+testOldNpm2() {
+  compile "failing-build"
+  assertCaptured "This version of npm (1.4.28) has several known issues"
 }
 
 testNonexistentNpm() {
@@ -111,37 +315,42 @@ testFailingBuild() {
   assertCapturedError 1 ""
 }
 
+testTicketOnFailure() {
+  compile "invalid-dependency"
+  assertCaptured "troubleshooting-node-deploys"
+  assertCaptured "please submit a ticket"
+  assertNotCaptured "possible problems"
+  assertCapturedError
+}
+
 testInfoEmpty() {
   compile "info-empty"
-  assertCaptured "Node engine:         unspecified"
-  assertCaptured "Npm engine:          unspecified"
-  assertCaptured "Start mechanism:     none"
-  assertCaptured "node_modules source: package.json"
-  assertCaptured "node_modules cached: false"
+  assertCaptured "engines.node (package.json):  unspecified"
+  assertCaptured "engines.npm (package.json):   unspecified"
+  assertCaptured "Installing node modules (package.json)"
   assertCapturedSuccess
 }
 
 testDangerousRangeStar() {
   compile "dangerous-range-star"
-  assertCaptured "WARNING: Avoid semver ranges like '*'"
-  assertCaptured "Node engine:         *"
+  assertCaptured "Dangerous semver range"
   assertCaptured "Resolving node version * via semver.io"
-  assertCaptured "Downloading and installing node 0.12"
-  assertCapturedSuccess
+  assertCaptured "Downloading and installing node 5."
+  assertCapturedError
 }
 
 testDangerousRangeGreaterThan() {
   compile "dangerous-range-greater-than"
-  assertCaptured "WARNING: Avoid semver ranges starting with '>'"
+  assertCaptured "Dangerous semver range"
   assertCaptured "Resolving node version >0.4 via semver.io"
-  assertCaptured "Downloading and installing node 0.12"
-  assertCapturedSuccess
+  assertCaptured "Downloading and installing node 5."
+  assertCapturedError
 }
 
 testRangeWithSpace() {
   compile "range-with-space"
   assertCaptured "Resolving node version >= 0.8.x via semver.io"
-  assertCaptured "Downloading and installing node 0.12"
+  assertCaptured "Downloading and installing node 5."
   assertCapturedSuccess
 }
 
@@ -151,50 +360,19 @@ testInvalidDependency() {
   assertCapturedError 1 ""
 }
 
-testNodeModulesCached() {
-  cache=$(mktmpdir)
-  compile "caching" $cache
-  assertCaptured "Caching results for future builds"
-  assertEquals "1" "$(ls -1 $cache/ | grep node | wc -l)"
-  assertEquals "1" "$(ls -1 $cache/node | grep node_modules | wc -l)"
-}
-
-testBuildWithCache() {
-  cache=$(mktmpdir)
-  compile "stable-node" $cache
-  assertCaptured "node_modules cached: false"
-  assertCaptured "Caching results for future builds"
-  assertCapturedSuccess
-
-  compile "stable-node" $cache
-  assertCaptured "node_modules cached: true"
-  assertCaptured "Restoring node modules from cache"
-  assertCapturedSuccess
-}
-
 testBuildWithUserCacheDirectories() {
   cache=$(mktmpdir)
-  compile "cache-directories" $cache
-  assertCapturedSuccess
-  assertEquals "1" "$(ls -1 $cache/node | grep bower_components | wc -l)"
-  assertEquals "1" "$(ls -1 $cache/node | grep node_modules | wc -l)"
 
   compile "cache-directories" $cache
-  assertCaptured "Restoring 2 directories from cache:"
+  assertCaptured "Saving 2 cacheDirectories"
+  assertEquals "1" "$(ls -1 $cache/node | grep bower_components | wc -l | tr -d ' ')"
+  assertEquals "1" "$(ls -1 $cache/node | grep node_modules | wc -l | tr -d ' ')"
+  assertCapturedSuccess
+
+  compile "cache-directories" $cache
+  assertCaptured "Loading 2 from cacheDirectories"
+  assertCaptured "- node_modules"
   assertCaptured "- bower_components"
-  assertCaptured "Restoring node modules from cache"
-  assertCapturedSuccess
-}
-
-testModulesCheckedIn() {
-  compile "modules-checked-in"
-  assertCaptured "node_modules source: prebuilt"
-  assertCaptured "Rebuilding any native modules for this architecture"
-  assertCaptured "(preinstall script)"
-  assertCaptured "Installing any new modules"
-  assertCaptured "(postinstall script)"
-  assertNotCaptured "Restoring node modules"
-  assertNotCaptured "Pruning unused dependencies"
   assertCapturedSuccess
 }
 
@@ -205,50 +383,15 @@ testUserConfig() {
   assertCapturedError 1 ""
 }
 
-testProcfile() {
-  compile "procfile-present-only"
-  assertCaptured "Start mechanism:     Procfile"
-  assertNotCaptured "new Procfile"
-  assertCapturedSuccess
-}
-
-testProcfileAbsentNpmStartPresent() {
-  compile "procfile-absent-npm-start-present"
-  assertCaptured "Start mechanism:     npm start"
-  assertCaptured "Adding 'web: npm start' to new Procfile"
-  assertFile "web: npm start" "Procfile"
-  assertCapturedSuccess
-}
-
-testProcfileAbsentNpmStartAbsent() {
-  compile "procfile-absent-npm-start-absent"
-  assertCaptured "Start mechanism:     none"
-  assertCaptured "None found"
-  assertNotCaptured "new Procfile"
+testDefaultProcType() {
+  release "stable-node"
+  assertCaptured "web: npm start"
   assertCapturedSuccess
 }
 
 testDynamicProcfile() {
   compile "dynamic-procfile"
-  assertCaptured "Procfile created during build"
   assertFileContains "web: node index.js customArg" "${compile_dir}/Procfile"
-  assertCapturedSuccess
-}
-
-testProcfileAbsentServerPresent() {
-  compile "procfile-absent-server-present"
-  assertCaptured "Start mechanism:     server.js"
-  assertCaptured "'web: node server.js' to new Procfile"
-  assertFile "web: node server.js" "Procfile"
-  assertCapturedSuccess
-}
-
-testServerPresentOnly() {
-  compile "server-present-only"
-  assertCaptured "WARNING: No package.json found"
-  assertCaptured "Skipping dependencies"
-  assertCaptured "'web: node server.js' to new Procfile"
-  assertFile "web: node server.js" "Procfile"
   assertCapturedSuccess
 }
 
@@ -294,7 +437,6 @@ testDevDependencies() {
 
 testOptionalDependencies() {
   env_dir=$(mktmpdir)
-  #echo "true" > $env_dir/NPM_CONFIG_OPTIONAL
   compile "optional-dependencies" "$(mktmpdir)" $env_dir
   assertNotCaptured "NPM_CONFIG_OPTIONAL"
   assertCaptured "less"
@@ -315,24 +457,6 @@ testNoOptionalDependencies() {
   assertNotCaptured "mkdirp"
   assertNotCaptured "clean-css"
   assertNotCaptured "request"
-  assertCapturedSuccess
-}
-
-testDisableCache() {
-  cache=$(mktmpdir)
-  env_dir=$(mktmpdir)
-
-  compile "node-modules-cache-1" $cache
-  assertCaptured "lodash@1.0.0"
-  assertCapturedSuccess
-
-  compile "node-modules-cache-2" $cache
-  assertCaptured "lodash@1.0.0"
-  assertCapturedSuccess
-
-  echo "false" > $env_dir/NODE_MODULES_CACHE
-  compile "node-modules-cache-2" $cache $env_dir
-  assertCaptured "lodash@1.3.1"
   assertCapturedSuccess
 }
 
@@ -357,7 +481,7 @@ testShrinkwrap() {
 testProfileExport() {
   compile "stable-node"
   assertCaptured "Creating runtime environment"
-  assertFileContains "export PATH=\"\$HOME/.heroku/node/bin:\$HOME/bin:\$HOME/node_modules/.bin:\$PATH\"" "${compile_dir}/.profile.d/nodejs.sh"
+  assertFileContains "export PATH=\"\$HOME/.heroku/node/bin:\$PATH:\$HOME/bin:\$HOME/node_modules/.bin\"" "${compile_dir}/.profile.d/nodejs.sh"
   assertFileContains "export NODE_HOME=\"\$HOME/.heroku/node\"" "${compile_dir}/.profile.d/nodejs.sh"
   assertCapturedSuccess
 }
@@ -365,56 +489,19 @@ testProfileExport() {
 testMultiExport() {
   compile "stable-node"
   assertFileContains "export PATH=" "${bp_dir}/export"
-  assertFileContains "/.heroku/node/bin:" "${bp_dir}/export"
-  assertFileContains "/node_modules/.bin:\$PATH" "${bp_dir}/export"
+  assertFileContains "/.heroku/node/bin" "${bp_dir}/export"
+  assertFileContains "/node_modules/.bin" "${bp_dir}/export"
   assertFileContains "export NODE_HOME=" "${bp_dir}/export"
   assertFileContains "/.heroku/node\"" "${bp_dir}/export"
   assertCapturedSuccess
 }
 
-testConcurrency1X() {
-  MEMORY_AVAILABLE=512 capture ${bp_dir}/lib/concurrency.sh
-  assertCaptured "Detected 512 MB available memory, 512 MB limit per process (WEB_MEMORY)"
-  assertCaptured "Recommending WEB_CONCURRENCY=1"
-  assertCapturedSuccess
-}
-
-testConcurrency2X() {
-  MEMORY_AVAILABLE=1024 capture ${bp_dir}/lib/concurrency.sh
-  assertCaptured "Detected 1024 MB available memory, 512 MB limit per process (WEB_MEMORY)"
-  assertCaptured "Recommending WEB_CONCURRENCY=2"
-  assertCapturedSuccess
-}
-
-testConcurrencyPX() {
-  MEMORY_AVAILABLE=6144 capture ${bp_dir}/lib/concurrency.sh
-  assertCaptured "Detected 6144 MB available memory, 512 MB limit per process (WEB_MEMORY)"
-  assertCaptured "Recommending WEB_CONCURRENCY=12"
-  assertCapturedSuccess
-}
-
-testConcurrencyCustomLimit() {
-  MEMORY_AVAILABLE=1024 WEB_MEMORY=256 capture ${bp_dir}/lib/concurrency.sh
-  assertCaptured "Detected 1024 MB available memory, 256 MB limit per process (WEB_MEMORY)"
-  assertCaptured "Recommending WEB_CONCURRENCY=4"
-  assertCapturedSuccess
-}
-
-testConcurrencySaneMaximum() {
-  MEMORY_AVAILABLE=6144 WEB_MEMORY=32 capture ${bp_dir}/lib/concurrency.sh
-  assertCaptured "Detected 6144 MB available memory, 32 MB limit per process (WEB_MEMORY)"
-  assertCaptured "Recommending WEB_CONCURRENCY=32"
-  assertCapturedSuccess
-}
-
-
 # Utils
 
 pushd $(dirname 0) >/dev/null
-bp_dir=$(pwd)
 popd >/dev/null
 
-source ${bp_dir}/test/utils
+source $(pwd)/test/utils
 
 mktmpdir() {
   dir=$(mktemp -t testXXXXX)
@@ -424,19 +511,47 @@ mktmpdir() {
 }
 
 detect() {
-  capture ${bp_dir}/bin/detect ${bp_dir}/test/fixtures/$1
+  capture $(pwd)/bin/detect $(pwd)/test/fixtures/$1
 }
 
 compile_dir=""
 
+default_process_types_cleanup() {
+  file="/tmp/default_process_types"
+  if [ -f "$file" ]; then
+    rm "$file"
+  fi
+}
+
 compile() {
+  default_process_types_cleanup
+  bp_dir=$(mktmpdir)
   compile_dir=$(mktmpdir)
-  cp -r ${bp_dir}/test/fixtures/$1/. ${compile_dir}
+  cp -a $(pwd)/* ${bp_dir}
+  cp -a ${bp_dir}/test/fixtures/$1/. ${compile_dir}
   capture ${bp_dir}/bin/compile ${compile_dir} ${2:-$(mktmpdir)} $3
+}
+
+compileDir() {
+  default_process_types_cleanup
+
+  local bp_dir=$(mktmpdir)
+  local compile_dir=${1:-$(mktmpdir)}
+  local cache_dir=${2:-$(mktmpdir)}
+  local env_dir=$3
+
+  cp -a $(pwd)/* ${bp_dir}
+  capture ${bp_dir}/bin/compile ${compile_dir} ${cache_dir} ${env_dir}
+}
+
+release() {
+  bp_dir=$(mktmpdir)
+  cp -a $(pwd)/* ${bp_dir}
+  capture ${bp_dir}/bin/release ${bp_dir}/test/fixtures/$1
 }
 
 assertFile() {
   assertEquals "$1" "$(cat ${compile_dir}/$2)"
 }
 
-source ${bp_dir}/test/shunit2
+source $(pwd)/test/shunit2

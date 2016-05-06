@@ -1,114 +1,160 @@
 #!/usr/bin/env bash
+# bin/compile <build-dir> <cache-dir> <env-dir>
 
-####### Configure environment
+### Configure environment
 
 set -o errexit    # always exit on error
-set -o errtrace   # trap errors in functions as well
 set -o pipefail   # don't ignore exit codes when piping output
-set -o posix      # more strict failures in subshells
-# set -x          # enable debugging
+set -o nounset    # fail on unset variables
+unset GIT_DIR     # Avoid GIT_DIR leak from previous build steps
 
-# Configure directories
-build_dir=$1
-cache_dir=$2
-env_dir=$3
-bp_dir=$(cd $(dirname $0); cd ..; pwd)
-heroku_dir=$build_dir/.heroku
-mkdir -p $heroku_dir/node
-warnings=$(mktemp)
+### Constants
 
-# Load dependencies
-source $bp_dir/lib/common.sh
-source $bp_dir/lib/build.sh
-source $bp_dir/lib/warnings.sh
+DEFAULT_CACHE="node_modules bower_components"
 
-# Avoid GIT_DIR leak from previous build steps
-unset GIT_DIR
+### Configure directories
 
-# Provide hook to deal with errors
-trap build_failed ERR
+BUILD_DIR=${1:-}
+CACHE_DIR=${2:-}
+ENV_DIR=${3:-}
+BP_DIR=$(cd $(dirname ${0:-}); cd ..; pwd)
 
-####### Determine current state
+mkdir -p "$BUILD_DIR/.heroku/node/"
+cd $BUILD_DIR
+export PATH="$BUILD_DIR/.heroku/node/bin":$PATH
 
-head "Reading application state"
-read_current_state
-show_current_state
+LOG_FILE='/tmp/node-build-log.txt'
+echo "" > "$LOG_FILE"
 
-if [ "$SSH_KEY" != "" ]; then
-  source $bp_dir/bin/ssh
-fi
+### Load dependencies
 
-if [ "$iojs_engine" == "" ]; then
-  warn_node_engine "$node_engine"
-else
-  warn_node_engine "$iojs_engine"
-fi
-warn_node_modules "$modules_source"
+source $BP_DIR/lib/output.sh
+source $BP_DIR/lib/json.sh
+source $BP_DIR/lib/failure.sh
+source $BP_DIR/lib/environment.sh
+source $BP_DIR/lib/binaries.sh
+source $BP_DIR/lib/cache.sh
+source $BP_DIR/lib/dependencies.sh
 
-####### Vendor in binaries
+### Handle errors
 
-head "Installing binaries"
-if [ "$iojs_engine" == "" ]; then
-  install_node "$node_engine"
-else
-  install_iojs "$iojs_engine"
-fi
-install_npm
+handle_failure() {
+  header "Build failed"
+  warn_untracked_dependencies "$LOG_FILE"
+  warn_angular_resolution "$LOG_FILE"
+  failure_message | output "$LOG_FILE"
+}
+trap 'handle_failure' ERR
 
-####### Build the project's dependencies
+### Check initial state
 
-head "Building dependencies"
-cd $build_dir
-build_dependencies
+[ -e "$BUILD_DIR/node_modules" ] && PREBUILD=true || PREBUILD=false
 
-# Check and run bower
-(
-  if [ -f $build_dir/bower.json ]; then
-    # Install bower locally
-    head "Found bower.json, installing bower."
-    npm install bower | indent
-    bower_dir=$build_dir/node_modules/.bin
-    info "Bower installed. Running bower install."
-    $bower_dir/bower install --force-latest && $bower_dir/bower update --force-latest | indent
+### Failures that should be caught immediately
 
-    # Deep Bower install.
-    if [ "$BOWER_GLOB" != "" ]; then
-      head "Installing bower components for bower components which match '$BOWER_GLOB'"
+fail_invalid_package_json "$BUILD_DIR"
+warn_prebuilt_modules "$BUILD_DIR"
+warn_missing_package_json "$BUILD_DIR"
 
-      for file in $( ls bower_components/$BOWER_GLOB/bower.json ); do
-        (cd `dirname $file` && $bower_dir/bower install | indent)
-      done
-    fi
+### Compile
 
-    # Custom bower folder for extra installs.
-    if [ "$CUSTOM_BOWER_DIR" != "" ]; then
-      if [ -d $build_dir/$CUSTOM_BOWER_DIR ]; then
-        head "Custom bower directory set, running bower install within '$CUSTOM_BOWER_DIR'"
-        (cd "$CUSTOM_BOWER_DIR" && $bower_dir/bower install | indent)
-      else
-        head "'$build_dir/$CUSTOM_BOWER_DIR' directory does not exist"
-      fi
-    fi
+create_env() {
+  write_profile "$BP_DIR" "$BUILD_DIR"
+  write_export "$BP_DIR" "$BUILD_DIR"
+  export_env_dir "$ENV_DIR"
+  create_default_env
+}
 
+header "Creating runtime environment"
+create_env # can't pipe the whole thing because piping causes subshells, preventing exports
+list_node_config | output "$LOG_FILE"
+
+install_bins() {
+  local node_engine=$(read_json "$BUILD_DIR/package.json" ".engines.node")
+  local iojs_engine=$(read_json "$BUILD_DIR/package.json" ".engines.iojs")
+  local npm_engine=$(read_json "$BUILD_DIR/package.json" ".engines.npm")
+
+  if [ -n "$iojs_engine" ]; then
+    echo "engines.iojs (package.json):  $iojs_engine (iojs)"
   else
-    head "No bower.json found"
+    echo "engines.node (package.json):  ${node_engine:-unspecified}"
   fi
-)
+  echo "engines.npm (package.json):   ${npm_engine:-unspecified (use default)}"
+  echo ""
 
+  if [ -n "$iojs_engine" ]; then
+    warn_node_engine "$iojs_engine"
+    install_iojs "$iojs_engine" "$BUILD_DIR/.heroku/node"
+    echo "Using bundled npm version for iojs compatibility: `npm --version`"
+  else
+    warn_node_engine "$node_engine"
+    install_nodejs "$node_engine" "$BUILD_DIR/.heroku/node"
+    install_npm "$npm_engine" "$BUILD_DIR/.heroku/node"
+  fi
+  warn_old_npm
+}
 
-####### Create a Procfile if possible
+header "Installing binaries"
+install_bins | output "$LOG_FILE"
 
-head "Checking startup method"
-ensure_procfile "$start_method" "$build_dir"
-warn_start "$start_method"
+restore_cache() {
+  local cache_status="$(get_cache_status)"
 
-####### Finalize the build
+  if [ "$cache_status" == "valid" ]; then
+    local cache_directories=$(get_cache_directories)
+    if [ "$cache_directories" == "" ]; then
+      echo "Loading 2 from cacheDirectories (default):"
+      restore_cache_directories "$BUILD_DIR" "$CACHE_DIR" "$DEFAULT_CACHE"
+    else
+      echo "Loading $(echo $cache_directories | wc -w | xargs) from cacheDirectories (package.json):"
+      restore_cache_directories "$BUILD_DIR" "$CACHE_DIR" $cache_directories
+    fi
+  else
+    echo "Skipping cache restore ($cache_status)"
+  fi
+}
 
-head "Finalizing build"
-write_profile
-write_export
+header "Restoring cache"
+restore_cache | output "$LOG_FILE"
 
-clean_npm
-clean_cache
-create_cache
-build_succeeded
+build_dependencies() {
+  run_if_present 'heroku-prebuild'
+  if $PREBUILD; then
+    echo "Prebuild detected (node_modules already exists)"
+    rebuild_node_modules "$BUILD_DIR"
+  else
+    install_node_modules "$BUILD_DIR"
+  fi
+  run_if_present 'heroku-postbuild'
+}
+
+header "Building dependencies"
+build_dependencies | output "$LOG_FILE"
+
+cache_build() {
+  local cache_directories=$(get_cache_directories)
+
+  echo "Clearing previous node cache"
+  clear_cache
+  if ! ${NODE_MODULES_CACHE:-true}; then
+    echo "Skipping cache save (disabled by config)"
+  elif [ "$cache_directories" == "" ]; then
+    echo "Saving 2 cacheDirectories (default):"
+    save_cache_directories "$BUILD_DIR" "$CACHE_DIR" "$DEFAULT_CACHE"
+  else
+    echo "Saving $(echo $cache_directories | wc -w | xargs) cacheDirectories (package.json):"
+    save_cache_directories "$BUILD_DIR" "$CACHE_DIR" $cache_directories
+  fi
+  save_signature
+}
+
+header "Caching build"
+cache_build | output "$LOG_FILE"
+
+summarize_build() {
+  cd $BUILD_DIR
+  (npm ls --depth=0 | tail -n +2 || true) 2>/dev/null
+}
+
+header "Build succeeded!"
+summarize_build | output "$LOG_FILE"
