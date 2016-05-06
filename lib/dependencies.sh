@@ -46,6 +46,8 @@ rebuild_node_modules() {
 
 install_bower_components() {
   local build_dir=${1:-}
+  local bower_glob=${2:-}
+  local custom_bower_dir=${3:-}
 
   # Check and run bower
   if [ -e $build_dir/bower.json ]; then
@@ -57,21 +59,21 @@ install_bower_components() {
     $bower_dir/bower install --force-latest && $bower_dir/bower update --force-latest 2>&1
 
     # Deep Bower install.
-    if [ "$BOWER_GLOB" != "" ]; then
-      header "Installing bower components for bower components which match '$BOWER_GLOB'"
+    if [ $bower_glob != "" ]; then
+      header "Installing bower components for bower components which match '$bower_glob'"
 
-      for file in $( ls bower_components/$BOWER_GLOB/bower.json ); do
+      for file in $( ls bower_components/$bower_glob/bower.json ); do
         (cd `dirname $file` && $bower_dir/bower install 2>&1)
       done
     fi
 
     # Custom bower folder for extra installs.
-    if [ "$CUSTOM_BOWER_DIR" != "" ]; then
-      if [ -d $build_dir/$CUSTOM_BOWER_DIR ]; then
-        header "Custom bower directory set, running bower install within '$CUSTOM_BOWER_DIR'"
-        (cd "$CUSTOM_BOWER_DIR" && $bower_dir/bower install 2>&1)
+    if [ $custom_bower_dir != "" ]; then
+      if [ -d $build_dir/$custom_bower_dir ]; then
+        header "Custom bower directory set, running bower install within '$custom_bower_dir'"
+        (cd "$custom_bower_dir" && $bower_dir/bower install 2>&1)
       else
-        header "'$build_dir/$CUSTOM_BOWER_DIR' directory does not exist"
+        header "'$build_dir/$custom_bower_dir' directory does not exist"
       fi
     fi
 
