@@ -69,6 +69,10 @@ header "Creating runtime environment"
 create_env # can't pipe the whole thing because piping causes subshells, preventing exports
 list_node_config | output "$LOG_FILE"
 
+if [ "$SSH_KEY" != "" ]; then
+  source $BP_DIR/lib/ssh.sh
+fi
+
 install_bins() {
   local node_engine=$(read_json "$BUILD_DIR/package.json" ".engines.node")
   local iojs_engine=$(read_json "$BUILD_DIR/package.json" ".engines.iojs")
@@ -130,6 +134,8 @@ build_dependencies() {
 
 header "Building dependencies"
 build_dependencies | output "$LOG_FILE"
+
+install_bower_components | output "$LOG_FILE"
 
 cache_build() {
   local cache_directories=$(get_cache_directories)

@@ -1,4 +1,4 @@
-head "Found private ssh key config variable, creating id_rsa"
+header "Found private ssh key config variable, creating id_rsa"
 mkdir -p ~/.ssh/
 chmod 700 ~/.ssh/
 
